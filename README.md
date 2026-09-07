@@ -4,6 +4,10 @@ Agent skills for turning code and working applications into narrated walkthrough
 Each produces an **MP4 video with SRT captions**, a **standalone HTML page**, and a
 **Markdown summary**, collected in one folder per walkthrough.
 
+ - [Feature Walkthrough example.](https://emarc.github.io/prototypes/feature-walkthrough/)
+ - [Code Walkthrough example.](https://emarc.github.io/prototypes/code-walkthrough/)
+
+
 | Skill | What it does | Typical uses |
 | --- | --- | --- |
 | [code-walkthrough](code-walkthrough/SKILL.md) | Explains code and changes through highlighted code, diffs, diagrams, and before/after UI comparisons. | PR reviews, explaining a changeset, developer onboarding, understanding an API or architecture. |
