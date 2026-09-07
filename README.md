@@ -12,8 +12,15 @@ Each produces an **MP4 video with SRT captions**, a **standalone HTML page**, an
 ## Example requests
 
 Point the agent at a local repository, commit, branch comparison, uncommitted
-changes, or a GitHub PR (by URL or number in the current repository). Tell it what
-to focus on:
+changes, or a GitHub PR (by URL or number in the current repository). 
+
+If you are in your project, you can be super concise
+```text
+/code-walkthrough #123
+/feature-walkthrough last commit
+```
+
+Or you can tell it a bit more, what to focus on:
 
 ```text
 /code-walkthrough Explain my uncommitted changes and why they matter.
