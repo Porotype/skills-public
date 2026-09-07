@@ -1,0 +1,287 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>code-video stage</title>
+<!-- The look lives in stage.css (shared with the exported walkthrough.html). -->
+<link rel="stylesheet" href="stage.css" />
+</head>
+<body>
+  <div id="stage"></div>
+<script>
+(() => {
+  const stage = document.getElementById('stage');
+  const escapeText = (s) => s.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+
+  // Split highlight.js output HTML into per-line HTML fragments, re-opening any
+  // spans (e.g. multi-line block comments) that straddle a newline.
+  function highlightToLines(code, lang) {
+    let value;
+    try {
+      if (lang && window.hljs && window.hljs.getLanguage(lang)) {
+        value = window.hljs.highlight(code, { language: lang, ignoreIllegals: true }).value;
+      } else if (window.hljs) {
+        value = window.hljs.highlightAuto(code).value;
+      } else {
+        value = escapeText(code);
+      }
+    } catch (e) {
+      value = escapeText(code);
+    }
+    const container = document.createElement('div');
+    container.innerHTML = value;
+    const lines = [''];
+    const open = [];
+    const push = (s) => { lines[lines.length - 1] += s; };
+    const newline = () => {
+      for (let i = open.length - 1; i >= 0; i--) push('</span>');
+      lines.push('');
+      for (const o of open) push(o);
+    };
+    const walk = (node) => {
+      for (const child of node.childNodes) {
+        if (child.nodeType === 3) {
+          const parts = child.nodeValue.split('\n');
+          for (let i = 0; i < parts.length; i++) {
+            if (i > 0) newline();
+            push(escapeText(parts[i]));
+          }
+        } else if (child.nodeType === 1) {
+          const cls = child.getAttribute('class') || '';
+          const tag = `<span class="${cls}">`;
+          push(tag); open.push(tag);
+          walk(child);
+          open.pop(); push('</span>');
+        }
+      }
+    };
+    walk(container);
+    // hljs trailing newline produces an empty final line — keep alignment sane.
+    if (lines.length > 1 && lines[lines.length - 1] === '') lines.pop();
+    return lines;
+  }
+
+  function clear() { stage.innerHTML = ''; }
+
+  // rows: [{ kind:'ctx'|'add'|'del'|'hunk', text, no:Number|null }]
+  // highlightSet: Set of line numbers (matched against row.no) to spotlight.
+  let current = null; // remember last code/diff scene for focus()
+
+  function renderRows({ fname, lang, badge, rows, highlightSet, mode }) {
+    clear();
+    const ed = document.createElement('div'); ed.className = 'editor fade';
+    const tb = document.createElement('div'); tb.className = 'titlebar';
+    tb.innerHTML = `<span class="dots"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span></span>`
+      + `<span class="fname"></span>` + (badge ? `<span class="badge"></span>` : '');
+    tb.querySelector('.fname').textContent = fname || '';
+    if (badge) tb.querySelector('.badge').textContent = badge;
+    ed.appendChild(tb);
+
+    const scroll = document.createElement('div'); scroll.className = 'code-scroll';
+    const rowsEl = document.createElement('div'); rowsEl.className = 'rows';
+    if (highlightSet && highlightSet.size) rowsEl.classList.add('spotlight');
+
+    // Pre-highlight whole block for plain code so multi-line tokens are correct.
+    let codeLines = null;
+    if (mode === 'code') {
+      codeLines = highlightToLines(rows.map((r) => r.text).join('\n'), lang);
+    }
+
+    rows.forEach((r, i) => {
+      const row = document.createElement('div');
+      row.className = 'row' + (r.kind && r.kind !== 'ctx' ? ' ' + r.kind : '');
+      if (highlightSet && r.no != null && highlightSet.has(r.no)) row.classList.add('hl');
+      const ln = document.createElement('span'); ln.className = 'ln';
+      ln.textContent = r.no != null ? String(r.no) : '';
+      const sign = document.createElement('span'); sign.className = 'sign';
+      sign.textContent = r.kind === 'add' ? '+' : r.kind === 'del' ? '-' : '';
+      const lc = document.createElement('span'); lc.className = 'lc';
+      if (mode === 'code' && codeLines) {
+        lc.innerHTML = codeLines[i] != null ? codeLines[i] : escapeText(r.text);
+      } else if (r.kind === 'hunk') {
+        lc.textContent = r.text;
+      } else {
+        lc.innerHTML = highlightToLines(r.text, lang)[0] || escapeText(r.text);
+      }
+      row.append(ln, sign, lc);
+      rowsEl.appendChild(row);
+    });
+    scroll.appendChild(rowsEl);
+    ed.appendChild(scroll);
+    stage.appendChild(ed);
+    current = { scroll, rowsEl };
+    scrollToHighlight();
+  }
+
+  function scrollToHighlight() {
+    if (!current) return;
+    const { scroll, rowsEl } = current;
+    const hl = rowsEl.querySelector('.row.hl');
+    if (hl) {
+      const target = hl.offsetTop - scroll.clientHeight / 2 + hl.clientHeight / 2;
+      scroll.scrollTo({ top: Math.max(0, target), behavior: 'smooth' });
+    } else {
+      scroll.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+  }
+
+  const Stage = {
+    ready: false,
+
+    showCode(opts) {
+      // opts: { fname, lang, badge, lines:[{no,text}], highlight:[Number] }
+      const rows = opts.lines.map((l) => ({ kind: 'ctx', text: l.text, no: l.no }));
+      const hs = new Set(opts.highlight || []);
+      renderRows({ fname: opts.fname, lang: opts.lang, badge: opts.badge, rows, highlightSet: hs, mode: 'code' });
+    },
+
+    showDiff(opts) {
+      // opts: { fname, lang, badge, rows:[{kind,text,no}], highlight:[Number] }
+      const hs = new Set(opts.highlight || []);
+      renderRows({ fname: opts.fname, lang: opts.lang, badge: opts.badge || 'diff', rows: opts.rows, highlightSet: hs, mode: 'diff' });
+    },
+
+    focus(opts) {
+      // Re-spotlight current code/diff without rebuilding.
+      if (!current) return;
+      const { rowsEl } = current;
+      const hs = new Set(opts.highlight || []);
+      rowsEl.querySelectorAll('.row').forEach((row) => row.classList.remove('hl'));
+      if (hs.size) {
+        rowsEl.classList.add('spotlight');
+        const rows = rowsEl.querySelectorAll('.row');
+        // Match by gutter number.
+        rows.forEach((row) => {
+          const n = parseInt(row.querySelector('.ln').textContent, 10);
+          if (!isNaN(n) && hs.has(n)) row.classList.add('hl');
+        });
+      } else {
+        rowsEl.classList.remove('spotlight');
+      }
+      scrollToHighlight();
+    },
+
+    showImage(opts) {
+      // opts: { src, caption, width, height }
+      clear();
+      const wrap = document.createElement('div'); wrap.className = 'imgwrap fade';
+      const img = document.createElement('img'); img.src = opts.src;
+      wrap.appendChild(img);
+      if (opts.caption) {
+        const cap = document.createElement('div'); cap.className = 'caption';
+        cap.textContent = opts.caption; wrap.appendChild(cap);
+      }
+      stage.appendChild(wrap);
+      return imgLoaded(img);
+    },
+
+    async compare(opts) {
+      // opts: { before, after, mode:'wipe'|'fade'|'slide', caption, beforeLabel, afterLabel, w, h }
+      clear();
+      const wrap = document.createElement('div');
+      wrap.style.display = 'flex'; wrap.style.flexDirection = 'column';
+      wrap.style.alignItems = 'center'; wrap.style.justifyContent = 'center';
+      wrap.style.gap = '18px'; wrap.style.width = '100%'; wrap.style.height = '100%';
+      wrap.className = 'fade';
+
+      const cmp = document.createElement('div'); cmp.className = 'compare';
+      const w = opts.w || 1000, h = opts.h || 620;
+      cmp.style.width = w + 'px'; cmp.style.height = h + 'px';
+      cmp.style.maxWidth = '100%'; cmp.style.maxHeight = 'calc(100% - 60px)';
+      const before = document.createElement('img'); before.className = 'before'; before.src = opts.before;
+      const after = document.createElement('img'); after.className = 'after'; after.src = opts.after;
+      const tagB = document.createElement('div'); tagB.className = 'tag b'; tagB.textContent = opts.beforeLabel || 'Before';
+      const tagA = document.createElement('div'); tagA.className = 'tag a'; tagA.textContent = opts.afterLabel || 'After';
+      const divider = document.createElement('div'); divider.className = 'divider';
+      cmp.append(before, after, divider, tagB, tagA);
+      wrap.appendChild(cmp);
+      if (opts.caption) {
+        const cap = document.createElement('div'); cap.className = 'caption'; cap.textContent = opts.caption;
+        wrap.appendChild(cap);
+      }
+      stage.appendChild(wrap);
+      await Promise.all([imgLoaded(before), imgLoaded(after)]);
+
+      const mode = opts.mode || 'wipe';
+      // Initial state: only "before" visible.
+      if (mode === 'fade') after.style.opacity = '0';
+      else if (mode === 'slide') after.style.transform = 'translateX(100%)';
+      else { after.style.clipPath = 'inset(0 100% 0 0)'; divider.style.display = 'block'; divider.style.left = '0px'; }
+      tagA.style.opacity = '0';
+
+      // Return a driver the renderer calls to animate over a chosen duration.
+      window.__compareDriver = (transitionMs) => {
+        const t = `${transitionMs}ms`;
+        after.style.transition = `clip-path ${t} ease, opacity ${t} ease, transform ${t} ease`;
+        tagA.style.transition = `opacity 300ms ease`;
+        requestAnimationFrame(() => {
+          if (mode === 'fade') after.style.opacity = '1';
+          else if (mode === 'slide') after.style.transform = 'translateX(0)';
+          else {
+            after.style.clipPath = 'inset(0 0% 0 0)';
+            divider.style.transition = `left ${t} ease`;
+            divider.style.left = cmp.clientWidth + 'px';
+          }
+          tagA.style.opacity = '1';
+        });
+      };
+    },
+
+    runCompare(transitionMs) {
+      if (window.__compareDriver) window.__compareDriver(transitionMs);
+    },
+
+    showDiagram(opts) {
+      // opts: { svg, caption } — SVG is pre-rendered in Node (beautiful-mermaid),
+      // so the same diagram appears in the video, the HTML and the MD.
+      clear();
+      const wrap = document.createElement('div'); wrap.className = 'diagram fade';
+      const mer = document.createElement('div'); mer.className = 'mer';
+      mer.innerHTML = opts.svg || '[no diagram]';
+      wrap.appendChild(mer);
+      if (opts.caption) {
+        const cap = document.createElement('div'); cap.className = 'caption'; cap.textContent = opts.caption;
+        wrap.appendChild(cap);
+      }
+      stage.appendChild(wrap);
+      // The SVG carries an intrinsic viewBox; let it scale to fill the stage.
+      const el = mer.querySelector('svg');
+      if (el) {
+        el.removeAttribute('width'); el.removeAttribute('height');
+        el.style.maxWidth = 'none';
+        el.style.width = '100%';
+        el.style.height = 'auto';
+        el.style.maxHeight = '100%';
+        el.setAttribute('preserveAspectRatio', 'xMidYMid meet');
+      }
+    },
+
+    showSection(opts) {
+      // opts: { title, subtitle, background }
+      clear();
+      if (opts.background) document.body.style.background = opts.background;
+      const sec = document.createElement('div'); sec.className = 'section fade';
+      const t = document.createElement('div'); t.className = 'stitle'; t.textContent = opts.title || '';
+      sec.appendChild(t);
+      if (opts.subtitle) { const s = document.createElement('div'); s.className = 'ssub'; s.textContent = opts.subtitle; sec.appendChild(s); }
+      stage.appendChild(sec);
+    },
+
+    resetBackground() {
+      document.body.style.background = '';
+    },
+  };
+
+  function imgLoaded(img) {
+    return new Promise((res) => {
+      if (img.complete && img.naturalWidth) return res();
+      img.onload = () => res();
+      img.onerror = () => res();
+    });
+  }
+
+  window.Stage = Stage;
+})();
+</script>
+</body>
+</html>
